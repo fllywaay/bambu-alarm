@@ -1,0 +1,55 @@
+name: Release firmware
+
+# Push a tag like v1.0.1 (git tag v1.0.1 && git push --tags) and this builds the firmware and publishes a GitHub
+# Release holding firmware.bin and version.json. The device's "Check for updates" reads those two files.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - run: pip install platformio
+
+      - name: Version from the tag
+        id: v
+        run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          FW_VERSION: ${{ steps.v.outputs.v }}
+        run: pio run
+
+      - name: Package
+        env:
+          V: ${{ steps.v.outputs.v }}
+        run: |
+          mkdir out
+          cp .pio/build/esp32s3/firmware.bin out/firmware.bin
+          SHA=$(sha256sum out/firmware.bin | cut -d' ' -f1)
+          SIZE=$(stat -c%s out/firmware.bin)
+          printf '{"version":"%s","sha256":"%s","size":%s}\n' "$V" "$SHA" "$SIZE" > out/version.json
+          cat out/version.json
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/firmware.bin
+            out/version.json
+          generate_release_notes: true
