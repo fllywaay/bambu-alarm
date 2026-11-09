@@ -250,6 +250,10 @@ static void onMsg(Link& L, uint8_t* payload, unsigned int len) {
     if (strcmp(g, "FAILED") != 0) L.failPend = 0;
     if (strcmp(g, "PAUSE") != 0) L.pausePend = 0;
     if (!grace) {
+      // a new print starting (from failed / finished / idle) acknowledges an alarm that is still ringing
+      if ((!strcmp(g, "PREPARE") || !strcmp(g, "RUNNING") || !strcmp(g, "SLICING")) &&
+          (!strcmp(prev, "FAILED") || !strcmp(prev, "FINISH") || !strcmp(prev, "IDLE")))
+        L.st.jobStartAt = millis() ? millis() : 1;
       if (!strcmp(g, "FAILED")) L.failPend = millis() ? millis() : 1;
       else if (!strcmp(g, "FINISH") && !strcmp(prev, "RUNNING")) fire(EV_FINISH, L.idx);
       else if (!strcmp(g, "PAUSE")) L.pausePend = millis() ? millis() : 1;
@@ -284,6 +288,10 @@ static void onMsg(Link& L, uint8_t* payload, unsigned int len) {
         if (e["temp"].is<uint32_t>()) {
           uint32_t v = e["temp"].as<uint32_t>();
           L.st.nozCur[id] = (int)(v & 0xFFFF); L.st.nozTgt[id] = (int)(v >> 16); L.st.nozMask |= (uint8_t)(1 << id);
+        }
+        if (e["snow"].is<uint32_t>()) {          // filament this nozzle is using: (amsId << 8) | slot, 0xFFFF = none
+          L.st.snow[id] = (int)e["snow"].as<uint32_t>();
+          L.st.snowMask |= (uint8_t)(1 << id);
         }
         k++;
       }
@@ -534,6 +542,12 @@ bool printersNextEvent(EventType* ev, int* idx, bool* ignored, char* detail, siz
   *ignored = m.ignored != 0;
   if (detail && detailLen) strlcpy(detail, m.detail, detailLen);
   return true;
+}
+
+bool printerJobStartedSince(int idx, uint32_t since) {
+  if (idx < 0 || idx >= MAX_PRINTERS) return false;
+  uint32_t t = s_links[idx].st.jobStartAt;
+  return t != 0 && (int32_t)(t - since) > 0;
 }
 
 bool printersEventStillActive(EventType ev) {

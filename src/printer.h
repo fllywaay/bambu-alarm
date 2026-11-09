@@ -27,10 +27,13 @@ struct PrinterState { bool connected; bool gotReport; uint32_t lastReport; char 
   int8_t active;          // active nozzle index (valid when has bit5 is set)
   AmsUnitState ams[MAX_AMS];
   uint32_t trayBits;      // tray_exist_bits: bit (amsId*4 + slot)
-  int trayNow;            // ams.tray_now (255 = none)
+  int trayNow;            // ams.tray_now (255 = none). On dual-nozzle printers this is only the slot number, NOT amsId*4+slot
+  int snow[2];            // device.extruder.info[k].snow: filament in use by nozzle k = (amsId << 8) | slot, 0xFFFF = none
+  uint8_t snowMask;       // bit k = snow[k] reported
   AmsTrayState ext[2];    // external spools (vir_slot, in report order)
   int extId[2];
   uint8_t extMask;
+  uint32_t jobStartAt;    // millis() when a new print started (state went to PREPARE / RUNNING from FAILED / FINISH / IDLE), 0 = never
 };
 
 void printersBegin();                       // starts the network task (SSDP + MQTT)
@@ -45,6 +48,10 @@ bool printersNextEvent(EventType* ev, int* idx, bool* ignored, char* detail, siz
 
 // Does the reason for this kind of alarm still exist? (used for snooze and auto-clear)
 bool printersEventStillActive(EventType ev);
+
+// Has a new print started on this printer after the given millis() time? (a ringing failed / error / finish alarm is
+// acknowledged by that)
+bool printerJobStartedSince(int idx, uint32_t since);
 
 // Raw MQTT payloads, kept in PSRAM for the web debug page. kind 0 = latest message, 1 = latest big (full) snapshot.
 // Returns nullptr when nothing has been received yet.

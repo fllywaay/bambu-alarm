@@ -11,8 +11,12 @@
 //   hms index  nHms x {u64 key, u32 off}  sorted by key (key = attr<<32 | code)
 //   err index  nErr x {u32 key, u32 off}  sorted by key (key = print_error)
 //   blob       NUL-terminated UTF-8 strings; off is relative to blobOff
-// One file per language: /hms_zh.bin (index 0) and /hms_en.bin (index 1). /hms.bin from before the bilingual
-// firmware is read as the Chinese file until a new Chinese file is installed (which removes it).
+//
+// Where the texts come from, per language (0 = ZH, 1 = EN):
+//   1. a file in LittleFS (/hms_zh.bin, /hms_en.bin; an old /hms.bin counts as the Chinese one), uploaded through
+//      /api/hmsdb - wins when present and valid, so newer texts can be put on a device without a firmware update;
+//   2. the copy built into the firmware (assets/hms_zh.bin, assets/hms_en.bin, see platformio.ini embed_files),
+//      so the meanings work right after flashing, with nothing to upload.
 #define HMSDB_PATH_ZH  "/hms_zh.bin"
 #define HMSDB_PATH_EN  "/hms_en.bin"
 #define HMSDB_PATH_OLD "/hms.bin"
@@ -20,12 +24,17 @@
 #define TXT_MAX    224        // longest official text is ~216 bytes
 #define CACHE_N    6          // the web log asks for the same few codes again and again
 
+extern const uint8_t hms_zh_start[] asm("_binary_assets_hms_zh_bin_start");
+extern const uint8_t hms_zh_end[] asm("_binary_assets_hms_zh_bin_end");
+extern const uint8_t hms_en_start[] asm("_binary_assets_hms_en_bin_start");
+extern const uint8_t hms_en_end[] asm("_binary_assets_hms_en_bin_end");
+
 struct DbHdr { uint32_t magic, nHms, nErr, hmsOff, errOff, blobOff, blobLen; };
 
 struct CacheEnt {
   bool used;
   uint8_t digits;             // 8 or 16
-  uint8_t lang;               // which file the text came from (0 / 1)
+  uint8_t lang;               // which table the text came from (0 / 1)
   uint64_t key;
   char txt[TXT_MAX];          // "" = looked up, not found
 };
@@ -33,11 +42,23 @@ struct CacheEnt {
 static SemaphoreHandle_t s_mx = nullptr;
 static DbHdr s_h[2];
 static bool s_ok[2] = {false, false};
-static const char* s_path[2] = {HMSDB_PATH_ZH, HMSDB_PATH_EN};   // file actually in use for each language
+static bool s_mem[2] = {false, false};                           // true: the table in use is the one built into the firmware
+static const char* s_path[2] = {HMSDB_PATH_ZH, HMSDB_PATH_EN};   // LittleFS file in use for each language (when !s_mem)
 static CacheEnt s_cache[CACHE_N];
 static uint8_t s_cacheNext = 0;
 
 static const char* dbPath(int lang) { return lang == LANG_EN ? HMSDB_PATH_EN : HMSDB_PATH_ZH; }
+static const uint8_t* memStart(int lang) { return lang == LANG_EN ? hms_en_start : hms_zh_start; }
+static size_t memLen(int lang) { return lang == LANG_EN ? (size_t)(hms_en_end - hms_en_start) : (size_t)(hms_zh_end - hms_zh_start); }
+
+static bool hdrValid(const DbHdr* h, size_t size) {
+  if (h->magic != 0x31534D48u) return false;                        // 'H','M','S','1'
+  if (h->hmsOff != HDR_SIZE) return false;
+  if (h->errOff != h->hmsOff + 12u * h->nHms) return false;
+  if (h->blobOff != h->errOff + 8u * h->nErr) return false;
+  if ((uint64_t)h->blobOff + h->blobLen != (uint64_t)size) return false;
+  return true;
+}
 
 static bool readHeader(File& f, DbHdr* h) {
   if (!f || f.size() < HDR_SIZE) return false;
@@ -45,22 +66,42 @@ static bool readHeader(File& f, DbHdr* h) {
   uint8_t b[HDR_SIZE];
   if (f.read(b, HDR_SIZE) != HDR_SIZE) return false;
   memcpy(h, b, HDR_SIZE);
-  if (h->magic != 0x31534D48u) return false;                        // 'H','M','S','1'
-  if (h->hmsOff != HDR_SIZE) return false;
-  if (h->errOff != h->hmsOff + 12u * h->nHms) return false;
-  if (h->blobOff != h->errOff + 8u * h->nErr) return false;
-  if ((uint64_t)h->blobOff + h->blobLen != (uint64_t)f.size()) return false;
-  return true;
+  return hdrValid(h, f.size());
 }
+
+static bool readHeaderMem(const uint8_t* m, size_t n, DbHdr* h) {
+  if (n < HDR_SIZE) return false;
+  memcpy(h, m, HDR_SIZE);
+  return hdrValid(h, n);
+}
+
+// Reads from either the LittleFS file or the table built into the firmware.
+struct Rd {
+  File f;
+  const uint8_t* m = nullptr;
+  size_t n = 0;
+  size_t read(uint32_t off, uint8_t* d, size_t len) {               // returns the bytes actually read
+    if (m) {
+      if (off >= n) return 0;
+      if (len > n - off) len = n - off;
+      memcpy(d, m + off, len);
+      return len;
+    }
+    if (!f) return 0;
+    f.seek(off);
+    return f.read(d, len);
+  }
+};
 
 static void clearCache() {
   memset(s_cache, 0, sizeof(s_cache));
   s_cacheNext = 0;
 }
 
-// Read the header of one language's file. Caller holds s_mx (or is still single-threaded in setup()).
+// Pick the table for one language. Caller holds s_mx (or is still single-threaded in setup()).
 static void loadOne(int lang) {
   s_ok[lang] = false;
+  s_mem[lang] = false;
   const char* cand[2] = {dbPath(lang), lang == LANG_ZH ? HMSDB_PATH_OLD : nullptr};
   for (const char* p : cand) {
     if (!p) continue;
@@ -76,6 +117,12 @@ static void loadOne(int lang) {
       return;
     }
   }
+  DbHdr h;
+  if (readHeaderMem(memStart(lang), memLen(lang), &h)) {
+    s_h[lang] = h;
+    s_mem[lang] = true;
+    s_ok[lang] = true;
+  }
 }
 
 void hmsDbBegin() {
@@ -84,8 +131,8 @@ void hmsDbBegin() {
   loadOne(LANG_ZH);
   loadOne(LANG_EN);
   Serial.printf("HMS texts: zh %s (%d codes), en %s (%d codes)\n",
-                s_ok[LANG_ZH] ? "loaded" : "not installed", hmsDbCount(LANG_ZH),
-                s_ok[LANG_EN] ? "loaded" : "not installed", hmsDbCount(LANG_EN));
+                s_ok[LANG_ZH] ? (s_mem[LANG_ZH] ? "built in" : "from file") : "not available", hmsDbCount(LANG_ZH),
+                s_ok[LANG_EN] ? (s_mem[LANG_EN] ? "built in" : "from file") : "not available", hmsDbCount(LANG_EN));
 }
 
 int hmsDbCount(int lang) {
@@ -95,13 +142,12 @@ int hmsDbCount(int lang) {
 }
 
 // Binary search of one index. entSize 12 (u64 key) or 8 (u32 key). Returns the blob offset in *off.
-static bool findKey(File& f, uint32_t base, uint32_t count, uint32_t entSize, uint64_t key, uint32_t* off) {
+static bool findKey(Rd& r, uint32_t base, uint32_t count, uint32_t entSize, uint64_t key, uint32_t* off) {
   int32_t lo = 0, hi = (int32_t)count - 1;
   uint8_t e[12];
   while (lo <= hi) {
     int32_t mid = lo + (hi - lo) / 2;
-    f.seek(base + (uint32_t)mid * entSize);
-    if (f.read(e, entSize) != entSize) return false;
+    if (r.read(base + (uint32_t)mid * entSize, e, entSize) != entSize) return false;
     uint64_t k;
     uint32_t o;
     if (entSize == 12) {
@@ -147,7 +193,7 @@ bool hmsDbLookup(const char* normCode, char* out, size_t n) {
 
   if (xSemaphoreTake(s_mx, pdMS_TO_TICKS(300)) != pdTRUE) return false;
 
-  // the language the device is set to; if that file is not installed, fall back to the other one
+  // the language the device is set to; if that table is not available, fall back to the other one
   int want = cfg.lang == LANG_EN ? LANG_EN : LANG_ZH;
   int use = s_ok[want] ? want : (s_ok[1 - want] ? 1 - want : -1);
   if (use < 0) { xSemaphoreGive(s_mx); return false; }
@@ -163,17 +209,24 @@ bool hmsDbLookup(const char* normCode, char* out, size_t n) {
   }
 
   char tmp[TXT_MAX] = {0};
-  File f = LittleFS.open(s_path[use], "r");
-  if (f) {
+  Rd r;
+  bool open = true;
+  if (s_mem[use]) {
+    r.m = memStart(use);
+    r.n = memLen(use);
+  } else {
+    r.f = LittleFS.open(s_path[use], "r");
+    open = (bool)r.f;
+  }
+  if (open) {
     uint32_t off = 0;
-    bool hit = (digits == 16) ? findKey(f, s_h[use].hmsOff, s_h[use].nHms, 12, key, &off)
-                              : findKey(f, s_h[use].errOff, s_h[use].nErr, 8, key, &off);
+    bool hit = (digits == 16) ? findKey(r, s_h[use].hmsOff, s_h[use].nHms, 12, key, &off)
+                              : findKey(r, s_h[use].errOff, s_h[use].nErr, 8, key, &off);
     if (hit && off < s_h[use].blobLen) {
-      f.seek(s_h[use].blobOff + off);
-      size_t got = f.read((uint8_t*)tmp, TXT_MAX - 1);
+      size_t got = r.read(s_h[use].blobOff + off, (uint8_t*)tmp, TXT_MAX - 1);
       tmp[got] = 0;
     }
-    f.close();
+    if (r.f) r.f.close();
   }
 
   CacheEnt& c = s_cache[s_cacheNext];

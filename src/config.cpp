@@ -115,6 +115,7 @@ void configDefaults() {
   cfg.ledQuietOff = true;
   cfg.apAlways = true;
   strlcpy(cfg.apPass, "h2d-alarm", sizeof(cfg.apPass));
+  strlcpy(cfg.ghRepo, "fllywaay/bambu-alarm", sizeof(cfg.ghRepo));   // firmware update source (Firmware tab)
   cfg.lanAccess = true;
   cfg.webPass[0] = 0;
   cfg.hmsSev = 2;          // fatal + serious only; "common" and "info" notices are only logged

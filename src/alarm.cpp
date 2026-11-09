@@ -1,6 +1,7 @@
 #include "alarm.h"
 #include "audio.h"
 #include "evlog.h"
+#include "printer.h"
 #include "pins.h"
 #include <Arduino.h>
 #include <time.h>
@@ -220,9 +221,18 @@ void alarmLoop() {
   }
 
   if (s_ring) {
+    // A new print started on that printer (after a failure, an error or a finished print): that acknowledges the alarm.
+    // The printer keeps the old error code / FAILED state until the new job is well under way, so do not wait for it.
+    if (s_autoClear && (s_ev == EV_FAILED || s_ev == EV_ERROR || s_ev == EV_FINISH) && printerJobStartedSince(s_printer, s_ringStart)) {
+      Serial.printf("%s: a new print started, stopping alarm\n", EV_KEYS[s_ev]);
+      evlogAdd(s_ev, s_printer < 0 ? 0 : s_printer, LOGF_CLEARED, "");
+      alarmStop();
+      return;
+    }
+
     // The reason is gone (printer reconnected / resumed / error cleared on the printer): stop the alarm by itself,
     // but only once it has stayed gone for 8 s, so a flickering status does not cut an alarm short.
-    if (s_autoClear && (s_ev == EV_OFFLINE || s_ev == EV_PAUSE || s_ev == EV_ERROR) && s_valid) {
+    if (s_autoClear && (s_ev == EV_OFFLINE || s_ev == EV_PAUSE || s_ev == EV_ERROR || s_ev == EV_FAILED) && s_valid) {
       if (!s_valid(s_ev)) {
         if (!s_goneSince) s_goneSince = now ? now : 1;
         if (now - s_goneSince >= 8000) {

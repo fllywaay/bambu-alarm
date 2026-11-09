@@ -86,19 +86,24 @@ LANGUAGE (Chinese / English)
   - Not translated, because you typed them: printer names, custom error-code notes, alarm clock labels.
   - Serial log output is English only.
 
-OFFICIAL ERROR TEXTS (optional, data/hms_zh.bin + data/hms_en.bin)
-  - Notifications and the web alarm log show the official Bambu text for an error code (taken from Bambu Studio's
-    open-source HMS data), in the device language. A custom note you set for a code always wins; unknown codes show
-    just the code. If the file for the current language is not installed, the other language's file is used.
-  - Build the files once (needs Python + internet):  python tools/build_hms.py   -> writes data/hms_zh.bin and
-    data/hms_en.bin (~400 KB each). Options: --lang en or --lang zh-cn (only one file), --src <folder with hms_*.json>
-    (use a local Bambu Studio clone). It merges the H2D (094) and H2S (093) texts; codes missing in Chinese fall back
-    to English.
-  - Put them on the device WITHOUT wiping settings (one call per language):
-      curl -u admin:PASSWORD -F "file=@data/hms_zh.bin" "http://bambu-radar.local/api/hmsdb?lang=zh"
-      curl -u admin:PASSWORD -F "file=@data/hms_en.bin" "http://bambu-radar.local/api/hmsdb?lang=en"
+OFFICIAL ERROR TEXTS (built into the firmware: assets/hms_zh.bin + assets/hms_en.bin)
+  - Notifications and the web alarm log show the official Bambu text for an error code, in the device language. A
+    custom note you set for a code always wins. A 16-digit HMS code that is not in the official table still gets a
+    meaning decoded from its own digits (module + level); other unknown codes show just the code.
+  - The tables are part of the firmware, so the meanings work right after flashing, with nothing to upload, and every
+    firmware update brings newer tables (the release workflow rebuilds them first).
+  - Sources: Bambu Studio's open-source HMS data (H2D 094 + H2S 093), then Bambu's live table (e.bambulab.com) for the
+    codes the first one lacks (~4800 HMS codes, ~800 print_error codes). Some codes exist in Bambu's data with an EMPTY
+    text; those are shown as "not in the official list" plus the decoded module and level.
+  - Rebuild the tables yourself (needs Python + internet):  python tools/build_hms.py   -> writes assets/hms_zh.bin and
+    assets/hms_en.bin, then build the firmware. Options: --lang en or --lang zh-cn (only one file), --src <folder with
+    hms_*.json> (use a local Bambu Studio clone, no online table).
+  - Optional: put newer tables on ONE device without a firmware update (a file on the device overrides the built-in
+    table for that language; one call per language):
+      curl -u admin:PASSWORD -F "file=@assets/hms_zh.bin" "http://bambu-radar.local/api/hmsdb?lang=zh"
+      curl -u admin:PASSWORD -F "file=@assets/hms_en.bin" "http://bambu-radar.local/api/hmsdb?lang=en"
     (drop -u when no web password is set or setup mode is on). The reply is {"ok":true,"lang":"en","count":N}; the
-    status JSON (/api/state) also has "hmsdbZh": N and "hmsdbEn": N, 0 = not installed.
+    status JSON (/api/state) has "hmsdbZh": N and "hmsdbEn": N = codes available per language (built in or uploaded).
   - An old single /hms.bin on the device keeps working as the Chinese file until you upload hms_zh.bin (which removes it).
   - Careful: "pio run -t uploadfs" replaces the WHOLE LittleFS partition (config.json with Wi-Fi / printers, sounds
     you uploaded in the browser, the event log). Only use it on a fresh device, or re-enter everything afterwards.

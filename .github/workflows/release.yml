@@ -26,6 +26,10 @@ jobs:
 
       - run: pip install platformio
 
+      - name: Refresh the error texts built into the firmware
+        # newest official tables from Bambu; if their servers cannot be reached the committed assets/hms_*.bin are used
+        run: python tools/build_hms.py || echo "using the committed assets/hms_*.bin"
+
       - name: Version from the tag
         id: v
         run: echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"

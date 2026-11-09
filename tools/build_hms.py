@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Build data/hms_zh.bin and data/hms_en.bin: the official Bambu HMS / print_error texts, packed for the H2D alarm firmware.
+"""Build assets/hms_zh.bin and assets/hms_en.bin: the official Bambu HMS / print_error texts, built into the alarm firmware.
 
-Source: Bambu Studio's open-source repo (resources/hms/hms_<lang>_<devtype>.json). The device type is the
-first 3 characters of the printer serial: 094 = H2D, 093 = H2S (same platform, newer texts).
+Source: Bambu Studio's open-source repo (resources/hms/hms_<lang>_<devtype>.json), then Bambu's live table
+(e.bambulab.com/query.php) for the codes that repo lacks. The device type is the first 3 characters of the
+printer serial: 094 = H2D, 093 = H2S (same platform, newer texts).
 
 Usage (run from the project folder):
-    python tools/build_hms.py                      # downloads from GitHub, writes data/hms_zh.bin AND data/hms_en.bin
+    python tools/build_hms.py                      # downloads, writes assets/hms_zh.bin AND assets/hms_en.bin
     python tools/build_hms.py --lang en            # only the English file (--lang zh-cn for only the Chinese one)
     python tools/build_hms.py --src C:\\path\\to\\BambuStudio\\resources\\hms   # use a local clone, no download
 
-The firmware picks the file that matches its language setting (cfg.lang). Upload each one with ?lang=zh / ?lang=en.
+Both files are built into the firmware (platformio.ini embed_files), so a plain pio run needs nothing uploaded. A file
+uploaded to a device with ?lang=zh / ?lang=en (see README) overrides the built-in one for that language.
 
 Codes missing in the chosen language fall back to English. Earlier device types in --dev win on conflicts.
 
@@ -60,7 +62,20 @@ def entries(blob, section):
     return out
 
 
-def collect(lang, devs, src):
+ONLINE = "https://e.bambulab.com/query.php?lang={lang}"   # the live table Bambu Studio / Handy query; same JSON layout
+
+
+def fetch_online(lang):
+    try:
+        req = urllib.request.Request(ONLINE.format(lang=lang), headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception as e:          # offline / site down: the Bambu Studio files alone still make a usable table
+        print(f"  (online table {lang} not available: {e})", file=sys.stderr)
+        return None
+
+
+def collect(lang, devs, src, online=True):
     tables = {"device_hms": {}, "device_error": {}}
     for dev in devs:
         blob = fetch(lang, dev, src)
@@ -71,13 +86,22 @@ def collect(lang, devs, src):
             for k, v in entries(blob, sec).items():
                 tables[sec].setdefault(k, v)
         print(f"  loaded {lang}/{dev}")
+    if online and not src:           # fill what the Bambu Studio files lack (newer codes, other modules)
+        blob = fetch_online(lang)
+        if blob:
+            before = {s: len(t) for s, t in tables.items()}
+            for sec in tables:
+                for k, v in entries(blob, sec).items():
+                    tables[sec].setdefault(k, v)
+            print(f"  online {lang}: +{len(tables['device_hms']) - before['device_hms']} hms, "
+                  f"+{len(tables['device_error']) - before['device_error']} print_error")
     return tables
 
 
-def build(lang, devs, src, out_path):
-    main_t = collect(lang, devs, src)
+def build(lang, devs, src, out_path, online=True):
+    main_t = collect(lang, devs, src, online)
     if lang != "en":
-        en_t = collect("en", devs, src)
+        en_t = collect("en", devs, src, online)
         for sec in main_t:
             for k, v in en_t[sec].items():
                 main_t[sec].setdefault(k, v)
@@ -116,14 +140,14 @@ def main():
     ap.add_argument("--lang", default="both", help="zh-cn, en, or both (default): one file per language")
     ap.add_argument("--dev", default="094,093", help="device types, highest priority first")
     ap.add_argument("--src", help="folder with hms_*.json (a local BambuStudio clone); default = download")
-    ap.add_argument("--out", help="output file (only with a single --lang); default data/hms_zh.bin and data/hms_en.bin")
+    ap.add_argument("--out", help="output file (only with a single --lang); default assets/hms_zh.bin and assets/hms_en.bin")
     a = ap.parse_args()
     devs = a.dev.split(",")
 
     langs = ["zh-cn", "en"] if a.lang == "both" else [a.lang]
     if a.out and len(langs) > 1:
         sys.exit("--out needs a single --lang (zh-cn or en)")
-    data_dir = Path(__file__).resolve().parent.parent / "data"
+    data_dir = Path(__file__).resolve().parent.parent / "assets"      # built into the firmware (platformio.ini embed_files)
     for lang in langs:
         out_path = a.out or str(data_dir / ("hms_en.bin" if lang == "en" else "hms_zh.bin"))
         build(lang, devs, a.src, out_path)

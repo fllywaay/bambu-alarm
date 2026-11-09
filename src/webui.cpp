@@ -226,7 +226,18 @@ static void hState() {
         to["e"] = ((s.trayBits >> (a * 4 + k)) & 1) != 0;
       }
     }
-    o["tn"] = s.trayNow;
+    // Which tray is feeding right now. Single-nozzle printers: ams.tray_now = amsId*4 + slot (254 external, 255 none).
+    // Dual-nozzle (H2D): ams.tray_now is only the SLOT number (1 = slot 2 of whichever AMS), so reading it as amsId*4+slot
+    // always lands on AMS 1. Use the active nozzle's own snow = (amsId << 8) | slot instead (0xFFFF = none).
+    int tn = s.trayNow;
+    if ((s.has & 32) && s.active >= 0 && s.active < 2 && (s.snowMask & (1 << s.active))) {
+      int sn = s.snow[s.active], a = (sn >> 8) & 0xFF, sl = sn & 0xFF;
+      if (sn == 0xFFFF) tn = 255;
+      else if (sl >= 254) tn = sl;                   // external spool
+      else if (a < MAX_AMS && sl < 4) tn = a * 4 + sl;
+      else tn = 255;                                 // a unit this page does not draw (e.g. AMS HT)
+    }
+    o["tn"] = tn;
     JsonArray ex = o["ext"].to<JsonArray>();
     for (int k = 0; k < 2; k++) {
       if (!(s.extMask & (1 << k))) continue;
