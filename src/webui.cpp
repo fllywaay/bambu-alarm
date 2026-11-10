@@ -7,6 +7,7 @@
 #include "notify.h"
 #include "hmsdb.h"
 #include "ota.h"
+#include "audio.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
@@ -287,6 +288,8 @@ static void hState() {
   d["hmsdbZh"] = hmsDbCount(0);
   d["hmsdbEn"] = hmsDbCount(1);
   d["fw"] = FW_VERSION;
+  d["audioFb"] = audioFallbackCount();       // times a sound file could not be played and the beep stood in (since boot)
+  d["audioWhy"] = audioFallbackReason();
   {
     // heap / stack telemetry: this run, and what the previous run left behind in RTC memory before it died
     JsonObject t = d["tel"].to<JsonObject>();

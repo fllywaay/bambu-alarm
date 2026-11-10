@@ -16,6 +16,8 @@ static volatile bool s_loop = true;
 static volatile uint32_t s_gen = 0;
 static char s_file[56] = "";
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint32_t s_fallbacks = 0;          // how many times the real sound could not be played and the beep stood in
+static const char* volatile s_why = "";            // why the last time: open / header / format / read
 
 static inline int16_t scaleS(int16_t s) { return (int16_t)((float)s * s_gain); }
 
@@ -24,12 +26,14 @@ static void i2sWrite(const int16_t* stereo, size_t frames) {
   i2s_write(I2S_NUM_0, stereo, frames * 4, &w, pdMS_TO_TICKS(200));
 }
 
-static void playTone(uint32_t myGen) {
+// Plain beep (880 Hz, half a second period). maxMs 0 = until stopped.
+static void playTone(uint32_t myGen, uint32_t maxMs) {
   crumb(2, 5);
   static int16_t buf[256 * 2];
   i2s_set_sample_rates(I2S_NUM_0, 16000);
   uint32_t n = 0;
-  while (s_play && s_gen == myGen) {
+  uint32_t maxN = maxMs * 16;                      // 16 samples per ms at 16 kHz
+  while (s_play && s_gen == myGen && (maxN == 0 || n < maxN)) {
     for (int i = 0; i < 256; i++) {
       uint32_t pos = (n + i) % 8000;  // 0.5 s period
       int16_t v = 0;
@@ -43,12 +47,12 @@ static void playTone(uint32_t myGen) {
   }
 }
 
-static bool playFile(uint32_t myGen) {
-  File f = LittleFS.open(s_file, "r");
+static bool playFile(const char* file, uint32_t myGen) {
+  File f = LittleFS.open(file, "r");
   crumb(2, 3);
-  if (!f) return false;
+  if (!f) { s_why = "open"; return false; }
   uint8_t hdr[12];
-  if (f.read(hdr, 12) != 12 || memcmp(hdr, "RIFF", 4) || memcmp(hdr + 8, "WAVE", 4)) { f.close(); return false; }
+  if (f.read(hdr, 12) != 12 || memcmp(hdr, "RIFF", 4) || memcmp(hdr + 8, "WAVE", 4)) { f.close(); s_why = "header"; return false; }
 
   uint16_t ch = 1, bits = 16;
   uint32_t rate = 16000, dataLen = 0;
@@ -73,7 +77,7 @@ static bool playFile(uint32_t myGen) {
       f.seek(f.position() + sz + (sz & 1));
     }
   }
-  if (!found || bits != 16 || ch < 1 || ch > 2 || rate < 8000 || rate > 48000) { f.close(); return false; }
+  if (!found || bits != 16 || ch < 1 || ch > 2 || rate < 8000 || rate > 48000) { f.close(); s_why = "format"; return false; }
 
   size_t dataStart = f.position();
   i2s_set_sample_rates(I2S_NUM_0, rate);
@@ -107,7 +111,7 @@ static bool playFile(uint32_t myGen) {
       }
       if (frames) i2sWrite(out, frames);
     }
-    if (got == 0) { f.close(); return false; }   // empty / unreadable data: fall back to the beep instead of spinning
+    if (got == 0 && s_play && s_gen == myGen) { f.close(); s_why = "read"; return false; }   // unreadable data: let the caller retry / beep
     vTaskDelay(1);                                // never hog the CPU between repeats
   } while (s_loop && s_play && s_gen == myGen);
   f.close();
@@ -117,9 +121,29 @@ static bool playFile(uint32_t myGen) {
 static void audioTask(void*) {
   for (;;) {
     if (!s_play) { crumb(2, 1); vTaskDelay(pdMS_TO_TICKS(20)); continue; }
-    uint32_t g = s_gen;
+    char file[sizeof(s_file)];
+    uint32_t g;
+    portENTER_CRITICAL(&s_mux);                 // take file name and generation together: audioPlay() may change them any time
+    strlcpy(file, s_file, sizeof(file));
+    g = s_gen;
+    portEXIT_CRITICAL(&s_mux);
     crumb(2, 2);
-    if (!playFile(g)) playTone(g);
+
+    bool ok = false;
+    for (int t = 0; t < 3 && !ok && s_play && s_gen == g; t++) {   // a failed open / read is usually a one-off: try again
+      ok = playFile(file, g);
+      if (!ok && t < 2) vTaskDelay(pdMS_TO_TICKS(40));
+    }
+    if (!ok && s_play && s_gen == g) {
+      s_fallbacks++;
+      Serial.printf("Audio: cannot play %s (%s), beeping and retrying the file\n", file, s_why);
+      // Beep so the alarm is not silent, but keep trying the real sound and go back to it as soon as it works.
+      while (s_play && s_gen == g) {
+        playTone(g, 1500);
+        if (!(s_play && s_gen == g)) break;
+        if (playFile(file, g)) { Serial.println("Audio: sound file is playing again"); break; }
+      }
+    }
     if (g == s_gen && !s_loop) s_play = false;
     i2s_zero_dma_buffer(I2S_NUM_0);
     crumb(2, 6);
@@ -169,6 +193,9 @@ void audioStop() {
   s_play = false;
   s_gen++;
 }
+
+uint32_t audioFallbackCount() { return s_fallbacks; }
+const char* audioFallbackReason() { return s_why; }
 
 void audioSetGain(float g) {
   if (g < 0) g = 0;
