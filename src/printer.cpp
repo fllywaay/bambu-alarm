@@ -443,8 +443,12 @@ static void linkLoop(Link& L) {
     if (now - L.lastPush > 30000) pushAll(L);  // also acts as a heartbeat
   }
 
-  // FAILED waits a moment so a user-cancel (print_error 0300400C etc.) can be told apart from a real failure
-  if (L.failPend && now - L.failPend > 1500) {
+  // FAILED waits a moment so a user-cancel (print_error 0300400C etc.) can be told apart from a real failure.
+  // A code that is already there needs only 1.5 s. With none yet, the H2D sends the cancel code several seconds after
+  // FAILED (seen: about 5 s), so with "manual cancel is not a failure" on wait up to 8 s for it; otherwise the failed
+  // alarm is already ringing when the code arrives. A cancel code seen since FAILED ends the wait at once.
+  uint32_t failNeed = ((L.st.err != 0) || !cfg.ignoreCancel || (L.cancelAt && (int32_t)(L.cancelAt - L.failPend) >= 0)) ? 1500 : 8000;
+  if (L.failPend && now - L.failPend > failNeed) {
     L.failPend = 0;
     char det[12] = "";
     bool recentCancel = cfg.ignoreCancel && L.cancelAt && now - L.cancelAt < 15000;   // cancel code may already be cleared
