@@ -18,6 +18,7 @@ static char s_file[56] = "";
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile uint32_t s_fallbacks = 0;          // how many times the real sound could not be played and the beep stood in
 static const char* volatile s_why = "";            // why the last time: open / header / format / read
+static char s_detail[96] = "";                     // which file and the numbers behind it, for the status JSON
 
 static inline int16_t scaleS(int16_t s) { return (int16_t)((float)s * s_gain); }
 
@@ -50,9 +51,9 @@ static void playTone(uint32_t myGen, uint32_t maxMs) {
 static bool playFile(const char* file, uint32_t myGen) {
   File f = LittleFS.open(file, "r");
   crumb(2, 3);
-  if (!f) { s_why = "open"; return false; }
+  if (!f) { snprintf(s_detail, sizeof(s_detail), "%s", file); s_why = "open"; return false; }
   uint8_t hdr[12];
-  if (f.read(hdr, 12) != 12 || memcmp(hdr, "RIFF", 4) || memcmp(hdr + 8, "WAVE", 4)) { f.close(); s_why = "header"; return false; }
+  if (f.read(hdr, 12) != 12 || memcmp(hdr, "RIFF", 4) || memcmp(hdr + 8, "WAVE", 4)) { f.close(); snprintf(s_detail, sizeof(s_detail), "%s", file); s_why = "header"; return false; }
 
   uint16_t ch = 1, bits = 16;
   uint32_t rate = 16000, dataLen = 0;
@@ -77,9 +78,13 @@ static bool playFile(const char* file, uint32_t myGen) {
       f.seek(f.position() + sz + (sz & 1));
     }
   }
-  if (!found || bits != 16 || ch < 1 || ch > 2 || rate < 8000 || rate > 48000) { f.close(); s_why = "format"; return false; }
+  if (!found || bits != 16 || ch < 1 || ch > 2 || rate < 8000 || rate > 48000) { f.close(); snprintf(s_detail, sizeof(s_detail), "%s rate=%u ch=%u bits=%u", file, (unsigned)rate, (unsigned)ch, (unsigned)bits); s_why = "format"; return false; }
 
   size_t dataStart = f.position();
+  // Streamed / converted WAVs often carry a data length of 0 (or one bigger than the file): play what is really there.
+  uint32_t fileLeft = (uint32_t)(f.size() > dataStart ? f.size() - dataStart : 0);
+  uint32_t declared = dataLen;
+  if (dataLen == 0 || dataLen > fileLeft) dataLen = fileLeft;
   i2s_set_sample_rates(I2S_NUM_0, rate);
   static int16_t in[512];
   static int16_t out[512 * 2];
@@ -111,7 +116,13 @@ static bool playFile(const char* file, uint32_t myGen) {
       }
       if (frames) i2sWrite(out, frames);
     }
-    if (got == 0 && s_play && s_gen == myGen) { f.close(); s_why = "read"; return false; }   // unreadable data: let the caller retry / beep
+    if (got == 0 && s_play && s_gen == myGen) {
+      snprintf(s_detail, sizeof(s_detail), "%s declared=%u size=%u start=%u rate=%u ch=%u", file, (unsigned)declared,
+               (unsigned)f.size(), (unsigned)dataStart, (unsigned)rate, (unsigned)ch);
+      f.close();
+      s_why = "read";
+      return false;
+    }   // unreadable data: let the caller retry / beep
     vTaskDelay(1);                                // never hog the CPU between repeats
   } while (s_loop && s_play && s_gen == myGen);
   f.close();
@@ -196,6 +207,7 @@ void audioStop() {
 
 uint32_t audioFallbackCount() { return s_fallbacks; }
 const char* audioFallbackReason() { return s_why; }
+const char* audioFallbackDetail() { return s_detail; }
 
 void audioSetGain(float g) {
   if (g < 0) g = 0;

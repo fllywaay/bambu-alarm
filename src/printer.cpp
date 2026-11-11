@@ -302,7 +302,17 @@ static void onMsg(Link& L, uint8_t* payload, unsigned int len) {
     }
   }
   const char* jn = pr["subtask_name"];
-  if (jn) strlcpy(L.st.job, jn, sizeof(L.st.job));
+  if (jn) {
+      // Copy at most sizeof-1 bytes but never cut a multi-byte character in half (long Cyrillic / Chinese names):
+      // strlcpy alone left a stray lead byte, which made the status JSON invalid UTF-8.
+      size_t cut = strlen(jn);
+      if (cut > sizeof(L.st.job) - 1) {
+        cut = sizeof(L.st.job) - 1;
+        while (cut > 0 && ((uint8_t)jn[cut] & 0xC0) == 0x80) cut--;   // jn[cut] is the first byte that does not fit
+      }
+      memcpy(L.st.job, jn, cut);
+      L.st.job[cut] = 0;
+    }
 
   // AMS filament overview (merged: incremental reports may carry only some units / trays)
   JsonObjectConst am = pr["ams"];

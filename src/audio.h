@@ -9,3 +9,4 @@ void audioSetGain(float g);   // 0..1
 // that happened since boot and why the last time (open / header / format / read), shown in the status JSON.
 uint32_t audioFallbackCount();
 const char* audioFallbackReason();
+const char* audioFallbackDetail();   // file name and the numbers behind the last failure

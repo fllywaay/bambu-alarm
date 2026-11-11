@@ -290,6 +290,7 @@ static void hState() {
   d["fw"] = FW_VERSION;
   d["audioFb"] = audioFallbackCount();       // times a sound file could not be played and the beep stood in (since boot)
   d["audioWhy"] = audioFallbackReason();
+  d["audioInfo"] = audioFallbackDetail();
   {
     // heap / stack telemetry: this run, and what the previous run left behind in RTC memory before it died
     JsonObject t = d["tel"].to<JsonObject>();
