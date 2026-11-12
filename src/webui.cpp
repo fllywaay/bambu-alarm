@@ -417,6 +417,7 @@ static void hSoundDelete() {
   String n = s_srv.arg("name");
   if (n.length() && n.indexOf('/') < 0) LittleFS.remove("/sounds/" + n);
   s_sndDirty = true;
+  audioInvalidate();
   sendOk();
 }
 
@@ -497,6 +498,7 @@ static void hUpload() {
   } else if (u.status == UPLOAD_FILE_END) {
     if (s_up) s_up.close();
     s_sndDirty = true;
+    audioInvalidate();
   }
 }
 
