@@ -564,6 +564,12 @@ bool printerJobStartedSince(int idx, uint32_t since) {
   return t != 0 && (int32_t)(t - since) > 0;
 }
 
+bool printerCancelledSince(int idx, uint32_t since) {
+  if (idx < 0 || idx >= MAX_PRINTERS) return false;
+  uint32_t t = s_links[idx].cancelAt;
+  return t != 0 && (int32_t)(t - since) > 0;
+}
+
 bool printersEventStillActive(EventType ev) {
   if (ev == EV_FINISH || ev == EV_CLOCK) return true;
   for (int i = 0; i < MAX_PRINTERS; i++) {

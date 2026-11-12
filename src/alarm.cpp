@@ -230,6 +230,18 @@ void alarmLoop() {
       return;
     }
 
+    // The print was cancelled by hand on the printer while a pause / error / failed alarm is ringing: whoever cancels
+    // is standing at the printer, so that acknowledges the alarm. Without this an HMS notice that the printer keeps
+    // listed after the cancel (e.g. an AMS warning) held the alarm on until it was dismissed on the printer screen.
+    // Only with "manual cancel is not a failure" on; with it off the cancel is meant to raise its own failed alarm.
+    if (s_autoClear && cfg.ignoreCancel && (s_ev == EV_PAUSE || s_ev == EV_ERROR || s_ev == EV_FAILED) &&
+        printerCancelledSince(s_printer, s_ringStart)) {
+      Serial.printf("%s: print cancelled by hand, stopping alarm\n", EV_KEYS[s_ev]);
+      evlogAdd(s_ev, s_printer < 0 ? 0 : s_printer, LOGF_CLEARED, "");
+      alarmStop();
+      return;
+    }
+
     // The reason is gone (printer reconnected / resumed / error cleared on the printer): stop the alarm by itself,
     // but only once it has stayed gone for 8 s, so a flickering status does not cut an alarm short.
     if (s_autoClear && (s_ev == EV_OFFLINE || s_ev == EV_PAUSE || s_ev == EV_ERROR || s_ev == EV_FAILED) && s_valid) {

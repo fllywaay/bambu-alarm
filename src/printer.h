@@ -53,6 +53,10 @@ bool printersEventStillActive(EventType ev);
 // acknowledged by that)
 bool printerJobStartedSince(int idx, uint32_t since);
 
+// Was the print cancelled by hand on this printer (a "cancelled by user" print_error was seen) after the given millis()
+// time? A ringing pause / error / failed alarm is acknowledged by that: whoever cancels is standing at the printer.
+bool printerCancelledSince(int idx, uint32_t since);
+
 // Raw MQTT payloads, kept in PSRAM for the web debug page. kind 0 = latest message, 1 = latest big (full) snapshot.
 // Returns nullptr when nothing has been received yet.
 const uint8_t* printersRawGet(int idx, int kind, size_t* len, uint32_t* ageSec);
