@@ -29,11 +29,32 @@ static char s_lastSsid[33] = "", s_lastPass[65] = "", s_lastApPass[33] = "";
 
 void onConfigSaved() { s_cfgChanged = true; }
 
-// (Re)start NTP. The last server is an IP address so it works even when DNS is flaky.
+// (Re)start NTP with the servers from the settings (Advanced tab). Empty entries are skipped; with none set the built-in
+// list is used (the last built-in server is an IP address so it works even when DNS is flaky).
+// The SNTP client keeps the host-name pointers it is given, so they point at static buffers, not at cfg (the web page rewrites cfg).
+static char s_ntpHost[NTP_SERVERS][NTP_HOST_LEN];
 void ntpSyncNow() {
-  configTzTime(cfg.tz, "tw.pool.ntp.org", "time.cloudflare.com", "162.159.200.1");
+  char tz[40];
+  char want[NTP_SERVERS][NTP_HOST_LEN];
+  int n = 0;
+  cfgLock();
+  strlcpy(tz, cfg.tz, sizeof(tz));
+  for (int i = 0; i < NTP_SERVERS; i++)
+    if (cfg.ntp[i][0]) strlcpy(want[n++], cfg.ntp[i], NTP_HOST_LEN);
+  cfgUnlock();
+  if (n == 0) {
+    strlcpy(want[0], "tw.pool.ntp.org", NTP_HOST_LEN);
+    strlcpy(want[1], "time.cloudflare.com", NTP_HOST_LEN);
+    strlcpy(want[2], "162.159.200.1", NTP_HOST_LEN);
+    n = 3;
+  }
+  for (int i = 0; i < NTP_SERVERS; i++) {
+    const char* w = i < n ? want[i] : "";
+    if (strcmp(s_ntpHost[i], w)) strlcpy(s_ntpHost[i], w, NTP_HOST_LEN);   // only touch the buffer when it changed
+  }
+  configTzTime(tz, s_ntpHost[0], n > 1 ? s_ntpHost[1] : nullptr, n > 2 ? s_ntpHost[2] : nullptr);
   s_ntpTry = millis();
-  Serial.println("NTP sync requested");
+  Serial.printf("NTP sync requested: %s%s%s%s%s\n", s_ntpHost[0], n > 1 ? ", " : "", n > 1 ? s_ntpHost[1] : "", n > 2 ? ", " : "", n > 2 ? s_ntpHost[2] : "");
 }
 
 // ------------------------------------------------------------- buttons ----
@@ -103,6 +124,13 @@ static int segKind(int i, int* pct) {
 
 static uint8_t sc(int v, float k) { int x = (int)(v * k + 0.5f); return x > 255 ? 255 : (uint8_t)x; }
 
+// Colour of a state from the settings (cfg.ledColor, 0xRRGGBB; Advanced tab).
+static void slotRgb(int slot, uint8_t& r, uint8_t& g, uint8_t& b) {
+  uint32_t c = (slot >= 0 && slot < LC_COUNT) ? cfg.ledColor[slot] : 0;
+  r = (c >> 16) & 255; g = (c >> 8) & 255; b = c & 255;
+}
+static void fillSlot(int slot, float k) { uint8_t r, g, b; slotRgb(slot, r, g, b); fillAll(r, g, b, k); }
+
 // Rainbow colour for hue h (0..360), value k (0..1).
 static void rainbow(float h, float k, uint8_t& r, uint8_t& g, uint8_t& b) {
   float x = k * (1.0f - fabsf(fmodf(h / 60.0f, 2.0f) - 1.0f));
@@ -145,19 +173,21 @@ static bool drawProgress(uint32_t now) {
         if (dist > len - dist) dist = len - dist;
         float level = 0.22f + 0.78f * expf(-dist * 0.45f);
         uint8_t cr, cg, cb;
-        rainbow(fmodf(now * 0.18f + j * (360.0f / len), 360.0f), level * bright, cr, cg, cb);
+        if (cfg.ledPrepRainbow) {
+          rainbow(fmodf(now * 0.18f + j * (360.0f / len), 360.0f), level * bright, cr, cg, cb);
+        } else {                                            // solid colour from the settings, same running head
+          uint8_t pr, pg, pb;
+          slotRgb(LC_PREP, pr, pg, pb);
+          float kk = level * bright;
+          cr = sc(pr, kk); cg = sc(pg, kk); cb = sc(pb, kk);
+        }
         strip.setPixelColor(pos + j, strip.Color(cr, cg, cb));
       }
       pos += len;
       continue;
     }
-    int r = 0, g = 0, b = 0;
-    switch (kind[s]) {
-      case 1: r = 0;   g = 120; b = 255; break;   // printing: blue
-      case 2: r = 255; g = 110; b = 0;   break;   // paused: amber
-      case 3: r = 255; g = 0;   b = 0;   break;   // failed / error: red
-      default: r = 0;  g = 255; b = 60;  break;   // finished: green
-    }
+    uint8_t r, g, b;
+    slotRgb(kind[s] == 1 ? LC_PRINT : kind[s] == 2 ? LC_PAUSE : kind[s] == 3 ? LC_ERROR : LC_DONE, r, g, b);   // printing / paused / failed / finished
     float lit = pct[s] / 100.0f * len;
     for (int j = 0; j < len; j++) {
       float level;
@@ -180,19 +210,20 @@ static bool drawProgress(uint32_t now) {
 }
 
 static void drawIdle() {
-  uint8_t r = 0, g = 0;
+  int slot;
   if (WiFi.status() != WL_CONNECTED) {
-    r = LED_IDLE_LEVEL;
+    slot = LC_WIFI_OFF;
   } else {
     int en = 0, ok = 0;
     for (int i = 0; i < MAX_PRINTERS; i++)
       if (cfg.printers[i].enabled) { en++; if (printerState(i).connected) ok++; }
-    if (en == 0) { r = g = LED_IDLE_LEVEL / 2; }
-    else if (ok == en) { g = LED_IDLE_LEVEL; }
-    else { r = LED_IDLE_LEVEL; g = LED_IDLE_LEVEL / 2; }
+    slot = en == 0 ? LC_NO_PRINTER : (ok == en ? LC_ALL_OK : LC_PARTIAL);
   }
-  float ik = cfg.ledIdle / 50.0f;                           // idle / waiting light: 0 = off, 50 = original level
-  strip.setPixelColor(0, strip.Color(sc(r, ik), sc(g, ik), 0));
+  uint8_t r, g, b;
+  slotRgb(slot, r, g, b);
+  // idle / waiting light: ledIdle 0 = off, 50 = original level; LED_IDLE_LEVEL is the base brightness of the pixel
+  float k = (cfg.ledIdle / 50.0f) * (LED_IDLE_LEVEL / 255.0f);
+  strip.setPixelColor(0, strip.Color(sc(r, k), sc(g, k), sc(b, k)));
 }
 
 // Self-test (power-on, or the "run self-test" button): digit display all lit, the LED ring sweeps red / green /
@@ -234,17 +265,17 @@ static void ledUpdate() {
   strip.clear();
   bool content = false;                                     // progress / idle picture (gets the breathing effect in mute mode)
   if (s_holdMs >= 3000 || now < s_flashUntil) {
-    if (s_flashKind == 1) fillAll(180, 0, 255, 0.45f);      // mute on
-    else fillAll(220, 220, 220, 0.35f);                     // mute off
+    if (s_flashKind == 1) fillSlot(LC_MUTE_ON, 0.45f);      // mute on
+    else fillSlot(LC_MUTE_OFF, 0.35f);                     // mute off
   } else if (s_holdMs >= 1000) {
-    fillAll(0, 80, 255, 0.35f);                             // release now = setup mode; keep holding = mute mode
+    fillSlot(LC_SETUP, 0.35f);                             // release now = setup mode; keep holding = mute mode
   } else if (alarmRinging()) {
     int st = alarmStage();
-    if (st == 0) fillAll(255, 120, 0, 0.25f + 0.25f * sinf(now / 400.0f));
-    else if (st == 1) { if ((now / 500) % 2) fillAll(255, 0, 0, 0.8f); }
-    else { if ((now / 80) % 2) fillAll(255, 0, 0, 1.0f); }
+    if (st == 0) fillSlot(LC_ALARM0, 0.25f + 0.25f * sinf(now / 400.0f));
+    else if (st == 1) { if ((now / 500) % 2) fillSlot(LC_ALARM1, 0.8f); }
+    else { if ((now / 80) % 2) fillSlot(LC_ALARM2, 1.0f); }
   } else if (s_setup) {
-    fillAll(0, 80, 255, 0.15f + 0.15f * (1.0f + sinf(now / 500.0f)));
+    fillSlot(LC_SETUP, 0.15f + 0.15f * (1.0f + sinf(now / 500.0f)));
   } else if (cfg.ledQuietOff && alarmQuietNow()) {
     // dark during do-not-disturb
   } else {

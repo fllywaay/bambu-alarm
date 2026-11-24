@@ -12,6 +12,44 @@ static SemaphoreHandle_t s_cfgMux = nullptr;
 void cfgLock() { if (s_cfgMux) xSemaphoreTake(s_cfgMux, portMAX_DELAY); }
 void cfgUnlock() { if (s_cfgMux) xSemaphoreGive(s_cfgMux); }
 const char* EV_KEYS[EV_COUNT] = {"failed", "finish", "pause", "error", "offline", "clock"};
+
+// Default LED colours (0xRRGGBB): the same values that used to be hard-coded in main.cpp, so an upgrade looks identical.
+// Idle-pixel colours (LC_WIFI_OFF .. LC_ALL_OK) are full-strength here and get dimmed by LED_IDLE_LEVEL when drawn.
+const uint32_t LED_COLOR_DEF[LC_COUNT] = {
+  0x0078FF,   // LC_PRINT       blue
+  0xFF6E00,   // LC_PAUSE       amber
+  0xFF0000,   // LC_ERROR       red
+  0x00FF3C,   // LC_DONE        green
+  0xB450FF,   // LC_PREP        violet (only used when the rainbow is off)
+  0xFF0000,   // LC_WIFI_OFF    red
+  0x808000,   // LC_NO_PRINTER  dim yellow
+  0xFF8000,   // LC_PARTIAL     orange
+  0x00FF00,   // LC_ALL_OK      green
+  0xFF7800,   // LC_ALARM0      orange
+  0xFF0000,   // LC_ALARM1      red
+  0xFF0000,   // LC_ALARM2      red
+  0x0050FF,   // LC_SETUP       blue
+  0xB400FF,   // LC_MUTE_ON     violet
+  0xDCDCDC,   // LC_MUTE_OFF    white
+};
+
+void configNtpDefaults() {
+  static const char* DEF[NTP_SERVERS] = {"tw.pool.ntp.org", "time.cloudflare.com", "162.159.200.1"};
+  for (int i = 0; i < NTP_SERVERS; i++) strlcpy(cfg.ntp[i], DEF[i], NTP_HOST_LEN);
+}
+
+// Keep only what a host name / IP address can contain; stop at the first other character (space, slash, ...).
+static void cleanHost(char* dst, size_t n, const char* s) {
+  size_t k = 0;
+  if (!n) return;
+  while (s && *s && isspace((unsigned char)*s)) s++;
+  for (; s && *s && k + 1 < n; s++) {
+    unsigned char c = (unsigned char)*s;
+    if (isalnum(c) || c == '.' || c == '-' || c == '_' || c == ':') dst[k++] = (char)c;
+    else break;
+  }
+  dst[k] = 0;
+}
 static const char* EV_NAMES_ZH[EV_COUNT] = {"打印失败", "打印完成", "打印暂停/断料", "打印机错误", "打印机失联", "闹钟"};
 static const char* EV_NAMES_EN[EV_COUNT] = {"Print failed", "Print finished", "Print paused / filament out", "Printer error", "Printer offline", "Alarm clock"};
 const char* evName(int ev, uint8_t lang) {
@@ -130,6 +168,9 @@ void configDefaults() {
   cfg.muteClock = false;
   cfg.selfTest = true;
   cfg.selfTestSound = true;
+  configNtpDefaults();
+  for (int i = 0; i < LC_COUNT; i++) cfg.ledColor[i] = LED_COLOR_DEF[i];
+  cfg.ledPrepRainbow = true;
   rule(EV_FAILED,  true, 1, true, true,  true,  0,  "alarm_urgent.wav");
   rule(EV_FINISH,  true, 0, true, false, false, 30, "chime_soft.wav");
   rule(EV_PAUSE,   true, 1, true, true,  true,  0,  "warning.wav");
@@ -249,6 +290,15 @@ void configToJson(JsonObject o) {
   o["selfTestSound"] = cfg.selfTestSound;
   o["lang"] = cfg.lang;
   o["ghRepo"] = cfg.ghRepo;
+  JsonArray nt = o["ntp"].to<JsonArray>();
+  for (int i = 0; i < NTP_SERVERS; i++) nt.add((const char*)cfg.ntp[i]);
+  JsonArray lc = o["ledColors"].to<JsonArray>();
+  for (int i = 0; i < LC_COUNT; i++) {
+    char cb[8];
+    snprintf(cb, sizeof(cb), "#%06X", (unsigned)(cfg.ledColor[i] & 0xFFFFFF));
+    lc.add(String(cb));
+  }
+  o["ledPrepRainbow"] = cfg.ledPrepRainbow;
   JsonArray ps = o["printers"].to<JsonArray>();
   for (int i = 0; i < MAX_PRINTERS; i++) {
     JsonObject p = ps.add<JsonObject>();
@@ -343,6 +393,28 @@ void configFromJson(JsonVariantConst d) {
   getBool(cfg.selfTestSound, d["selfTestSound"]);
   getNum(cfg.lang, d["lang"], 0, 1);
   cps(cfg.ghRepo, sizeof(cfg.ghRepo), d["ghRepo"]);
+
+  JsonArrayConst nt = d["ntp"];
+  if (!nt.isNull()) {
+    bool any = false;
+    for (int i = 0; i < NTP_SERVERS; i++) {
+      cfg.ntp[i][0] = 0;
+      if (i < (int)nt.size()) cleanHost(cfg.ntp[i], NTP_HOST_LEN, nt[i].as<const char*>());
+      if (cfg.ntp[i][0]) any = true;
+    }
+    if (!any) configNtpDefaults();          // all three emptied: back to the built-in servers
+  }
+  JsonArrayConst lc = d["ledColors"];
+  for (int i = 0; i < LC_COUNT && i < (int)lc.size(); i++) {
+    const char* s = lc[i].as<const char*>();
+    if (!s) continue;
+    if (*s == '#') s++;
+    if (strlen(s) != 6) continue;
+    char* e = nullptr;
+    unsigned long v = strtoul(s, &e, 16);
+    if (e && *e == 0) cfg.ledColor[i] = (uint32_t)v;
+  }
+  getBool(cfg.ledPrepRainbow, d["ledPrepRainbow"]);
 
   JsonArrayConst ps = d["printers"];
   for (int i = 0; i < MAX_PRINTERS && i < (int)ps.size(); i++) {

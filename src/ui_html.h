@@ -72,6 +72,7 @@ code{background:#0d141c;border:1px solid var(--line);border-radius:5px;padding:0
 .tray small{font-size:11px;color:var(--mut);display:block;min-height:14px}
 .amsh{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--mut);margin-top:12px}
 .amsh b{color:var(--fg)}
+input[type=color]{flex:0 0 56px;height:34px;background:#0d141c;border:1px solid var(--line);border-radius:10px;padding:2px;cursor:pointer}
 </style></head><body>
 <header><svg class="logo" viewBox="0 0 36 36"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b9cff"/><stop offset="1" stop-color="#7c5cff"/></linearGradient><linearGradient id="sg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3b9cff" stop-opacity="0"/><stop offset="1" stop-color="#3b9cff" stop-opacity=".8"/></linearGradient></defs><circle cx="18" cy="18" r="16" fill="#0d141c" stroke="url(#lg)" stroke-width="2"/><circle cx="18" cy="18" r="10" fill="none" stroke="#2a3a4d"/><circle cx="18" cy="18" r="4" fill="none" stroke="#2a3a4d"/><path class="swp" d="M18 18 L18 2 A16 16 0 0 1 32 10 Z" fill="url(#sg)"/><circle cx="25" cy="11" r="2" fill="#34d399"/></svg><div><div class="t" id="ht"></div><div class="s" id="hsub"></div></div><span id="hs" class="chip"></span><button class="lang" id="lang" onclick="setLang()"></button></header>
 <nav id="nav"></nav>
@@ -94,7 +95,7 @@ function applyStatic(){
   $('#lang').textContent=LANG==='en'?'中文':'EN';
   if(!S){$('#v').textContent=t('加载中…','Loading…');$('#hs').className='chip';$('#hs').textContent=t('连接中','Connecting')}
 }
-const TABS=()=>[['status','📡 '+t('状态','Status')],['wifi','📶 Wi-Fi'],['printer','🖨️ '+t('打印机','Printers')],['alarm','🔔 '+t('告警','Alerts')],['clock','⏰ '+t('闹钟','Alarm clock')],['err','🧹 '+t('错误码','Error codes')],['notify','📨 '+t('通知','Notify')],['log','📋 '+t('记录','Log')],['sound','🔊 '+t('音效','Sounds')],['fw','⬆️ '+t('固件','Firmware')],['debug','🐞 '+t('调试','Debug')]];
+const TABS=()=>[['status','📡 '+t('状态','Status')],['wifi','📶 Wi-Fi'],['printer','🖨️ '+t('打印机','Printers')],['alarm','🔔 '+t('告警','Alerts')],['clock','⏰ '+t('闹钟','Alarm clock')],['err','🧹 '+t('错误码','Error codes')],['notify','📨 '+t('通知','Notify')],['log','📋 '+t('记录','Log')],['sound','🔊 '+t('音效','Sounds')],['adv','🛠️ '+t('高级','Advanced')],['fw','⬆️ '+t('固件','Firmware')],['debug','🐞 '+t('调试','Debug')]];
 const EV=()=>[['failed',t('打印失败','Print failed')],['finish',t('打印完成','Print finished')],['pause',t('暂停 / 断料','Paused / filament out')],['error',t('错误 / HMS','Error / HMS')],['offline',t('打印机失联','Printer offline')],['clock',t('闹钟','Alarm clock')]];
 const HINT=k=>({clock:t('这里只设置闹钟的铃声、强度和自动停止时间;响铃的时间在「闹钟」页设置。','Only the sound, strength and auto-stop of the alarm clock are set here; the ring times are set on the Alarm clock tab.'),error:t('只对「错误码」页设定的门槛以上的 HMS 和打印机错误码响铃,其余只记入「记录」页。','Rings only for HMS notices above the threshold set on the Error codes tab, and for printer error codes. Everything else is only written to the Log tab.'),
  offline:t('判定依据:与打印机的 MQTT 连接断开超过「失联判定」秒;连接正常时(哪怕打印机空闲不发数据)不会触发。打印机恢复连接后,失联告警会自动停止。','Rule: the MQTT link to the printer has been down longer than "Offline after (s)". It never fires while the link is up, even if an idle printer sends no data. The alarm stops by itself when the printer reconnects.')})[k]||'';
@@ -194,7 +195,7 @@ ${nets?nets.map((n,i)=>`<div class="li"><span>${esc(n.ssid)} <span class="mut">$
 <div class="mut">${t('保存后设备会用新的 Wi-Fi 重新连接。','After saving, the device reconnects with the new Wi-Fi.')}</div>
 <div class="card"><h3>${t('校时','Clock sync')}</h3>
 <div>${S.time?`<span class="ok">${t('已校时','Synced')}</span> · ${esc(S.time)}`:`<span class="bad">${t('未校时','Not synced')}</span>`}</div>
-<div class="row"><button class="g" onclick="syncNtp()">${t('立即网络校时 (NTP)','Sync now (NTP)')}</button><button class="g" onclick="syncBrowser()">${t('用这台设备的时间校时','Use this device\'s time')}</button></div>
+<div class="row"><button class="g" onclick="syncNtp()">${t('立即网络校时 (NTP)','Sync now (NTP)')}</button><button class="g" onclick="syncBrowser()">${t('用这台设备的时间校时','Use this device\'s time')}</button><button class="g" onclick="go('adv')">${t('NTP 服务器设置…','NTP server settings…')}</button></div>
 <div class="mut">${t('设备联网后会自动校时,没成功时每 20 秒重试一次直到成功(服务器含一个 IP 地址,DNS 不稳也能用)。如果路由器挡了 NTP,打开本页时设备还没校时的话会自动用你浏览器的时间校一次;设备没有电池时钟,断电重启后要重新校。时区在「告警」页。','After going online the device syncs automatically and retries every 20 s until it succeeds (one server is an IP address, so flaky DNS does not matter). If your router blocks NTP, opening this page while the device is unsynced sets the clock from your browser once. The device has no battery clock, so it must sync again after every power cycle. The time zone is on the Alerts tab.')}</div></div>
 <div class="card"><h3>${t('局域网访问(电脑打开设置页)','LAN access (open this page from a PC)')}</h3>
 <div class="sw"><label><input type="checkbox" data-k="lanAccess">${t('允许局域网内的电脑 / 手机直接打开本页(不用按设置键)','Allow computers / phones on the LAN to open this page directly (no need to press the SETUP button)')}</label></div>
@@ -319,6 +320,23 @@ return `<div class="card"><h3>${t('调试 · 原始数据','Debug · raw data')}
 <div class="mut" id="dbgi"></div>
 <pre id="dbgp" style="max-height:60vh;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:12px;background:#0d141c;border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0 0"></pre></div>
 <div class="mut">${t('「完整快照」= 打印机最近一次发来的大报文(设备每 30 秒主动请求一次);「最新一条消息」通常只含刚变化的字段。比对「固件解析结果」和快照里的字段,就能看出哪个值没读对。报文不含访问码,但包含序列号等信息,贴到公开场合前请先检查。','"Full snapshot" = the latest large message from the printer (the device requests one every 30 s); "Latest message" usually holds only the fields that just changed. Compare "What the firmware parsed" with the snapshot to spot a value that is read wrongly. The payload does not contain the access code but does contain the serial number and similar, so check it before posting it publicly.')}</div>`},
+adv(){
+const LCG=[
+[t('打印进度灯','Print progress'),[[0,t('打印中','Printing')],[1,t('暂停','Paused')],[2,t('失败 / 错误(闪烁)','Failed / error (blinking)')],[3,t('完成','Finished')],[4,t('准备中(预热 / 调平 / 归零)','Preparing (preheat / levelling / homing)')]]],
+[t('待机指示灯(灯环第 1 颗)','Idle indicator (first LED)'),[[5,t('Wi-Fi 未连接','Wi-Fi not connected')],[6,t('没有启用的打印机','No printer enabled')],[7,t('部分打印机离线','Some printers offline')],[8,t('全部打印机在线','All printers online')]]],
+[t('告警响铃时','While an alarm rings'),[[9,t('温和阶段(呼吸)','Gentle stage (breathing)')],[10,t('加强阶段(慢闪)','Loud stage (slow flash)')],[11,t('最强阶段(快闪)','Maximum stage (fast flash)')]]],
+[t('其他','Other'),[[12,t('设置模式 / 按住设置键 1 秒','Setup mode / SETUP held 1 s')],[13,t('静音开启提示','Mute-on flash')],[14,t('静音关闭提示','Mute-off flash')]]]];
+const row=(i,n)=>`<div class='row'><label>${n}</label><input type='color' data-k='ledColors.${i}'><button class='g' onclick='ledReset(${i})'>${t('默认','Default')}</button></div>`;
+const dl=['tw.pool.ntp.org','pool.ntp.org','time.cloudflare.com','time.google.com','time.apple.com','time.windows.com'];
+return `<div class='card'><h3>NTP ${t('校时服务器','time servers')}</h3>
+<datalist id='ntpl'>${dl.map(x=>`<option value='${x}'>`).join('')}</datalist>
+${[0,1,2].map(i=>`<div class='row'><label>${t('服务器 ','Server ')}${i+1}${i===0?t('(主)',' (primary)'):''}</label><input type='text' data-k='ntp.${i}' list='ntpl' maxlength='39' autocapitalize='off' autocomplete='off' spellcheck='false' placeholder='${t('域名或 IP,可留空','host name or IP, may be empty')}'></div>`).join('')}
+<div class='row'><button class='g' onclick='ntpDef()'>${t('恢复默认服务器','Restore default servers')}</button><button class='g' onclick='syncNtp()'>${t('立即校时(用已保存设置)','Sync now (saved settings)')}</button></div>
+<div class='mut'>${t('按顺序尝试,填域名或 IP 都行(填 IP 可避开 DNS 问题);留空的会被跳过,三个都留空 = 恢复默认(<code>tw.pool.ntp.org</code>、<code>time.cloudflare.com</code>、<code>162.159.200.1</code>)。改完点「保存设置」,保存后设备会立刻用新服务器重新校时。如果路由器挡了 NTP(UDP 123),可以改用局域网内的 NTP 服务器(不少路由器自带,填路由器 IP 即可)。时区在「告警」页。当前设备时间:','Tried in order; a host name or an IP address both work (an IP avoids DNS problems). Empty entries are skipped; all three empty = back to the defaults (<code>tw.pool.ntp.org</code>, <code>time.cloudflare.com</code>, <code>162.159.200.1</code>). Press Save settings afterwards: the device re-syncs right away with the new servers. If your router blocks NTP (UDP 123), use an NTP server on your own LAN (many routers run one, enter the router IP). The time zone is on the Alerts tab. Device time now: ')}${S.time?esc(S.time):t('未校时','not synced')}</div></div>
+<div class='card'><h3>${t('LED 灯环颜色','LED ring colours')}</h3>
+${LCG.map((g,gi)=>`<div class='mut' style='margin-top:${gi?14:0}px'><b>${g[0]}</b></div>${g[1].map(([i,n])=>row(i,n)).join('')}${gi===0?`<div class='sw'><label><input type='checkbox' data-k='ledPrepRainbow'>${t('「准备中」用彩虹色(取消勾选则用上面选的颜色)','Rainbow while preparing (untick to use the colour chosen above)')}</label></div>`:''}`).join('')}
+<div class='row' style='margin-top:12px'><button class='g' onclick='ledResetAll()'>${t('全部恢复默认颜色','Restore all default colours')}</button></div>
+<div class='mut'>${t('点色块选颜色,改完点「保存设置」生效(几秒内灯环就会换成新颜色)。亮度仍在「告警」页的「进度灯」卡片里调:总亮度、待机灯亮度、完成灯亮度都照常生效,这里的颜色只决定“什么色”,不决定“多亮”。待机指示灯(第 1 颗)本来就很暗,并随待机灯亮度缩放,选深色会更不明显。开机自检的红 / 绿 / 蓝三色扫描不受影响。','Click a swatch to pick a colour, then press Save settings (the ring switches within a few seconds). Brightness is still set in the Progress light card on the Alerts tab: master brightness, idle level and finished-bar level all still apply; a colour here only decides the hue, not how bright it is. The idle indicator (first LED) is deliberately dim and follows the idle level, so dark colours are hard to see. The power-on self-test sweep (red / green / blue) is unchanged.')}</div></div>`},
 fw(){return `<div class="card"><h3>${t('固件版本','Firmware version')}</h3><div>${t('当前版本','Current version')}: <b>${esc(S.fw||'?')}</b> <span class="mut" id="fwslot"></span></div>
 <div class="mut">${t('更新固件不会改动你的设置、音效和错误码文本。更新过程中请勿断电;设备正在响铃时不能更新;写入约需一两分钟,完成后设备自动重启。','Updating the firmware keeps your settings, sounds and error texts. Do not power off during the update. It cannot start while an alarm is ringing. Writing takes a minute or two, then the device restarts by itself.')}</div></div>
 <div class="card" id="fwst" style="display:none"></div>
@@ -342,6 +360,10 @@ function addClock(){if(C.clocks.length>=6)return toast(t('最多 6 个','Max. 6'
 function delClock(i){C.clocks.splice(i,1);render()}
 function setClockDay(i,d,on){const a=C.clocks[i];a.days=on?(a.days|(1<<d)):(a.days&~(1<<d));render()}
 function clockPreset(i,m){C.clocks[i].days=m;render()}
+const LEDDEF=['#0078ff','#ff6e00','#ff0000','#00ff3c','#b450ff','#ff0000','#808000','#ff8000','#00ff00','#ff7800','#ff0000','#ff0000','#0050ff','#b400ff','#dcdcdc'];   // same order and values as LED_COLOR_DEF in config.cpp
+function ledReset(i){C.ledColors[i]=LEDDEF[i];render()}
+function ledResetAll(){C.ledColors=LEDDEF.slice();C.ledPrepRainbow=true;render()}
+function ntpDef(){C.ntp=['tw.pool.ntp.org','time.cloudflare.com','162.159.200.1'];render()}
 function go(x){tab=x;render();if(x==='log')loadLog();if(x==='debug')loadDbg();if(x==='fw')loadFw()}
 async function loadDbg(quiet){
   if(DBG.kind==='parsed'){DBG.text=JSON.stringify(S.printers[DBG.i],null,1);DBG.bad=false;if(!quiet)await refresh();return drawDbg()}

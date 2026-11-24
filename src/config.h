@@ -22,6 +22,30 @@ struct EventRule {
   char sound[32];
 };
 
+// LED ring colour slots (cfg.ledColor[slot] = 0xRRGGBB). The order is shared with the web page (LEDDEF in ui_html.h).
+enum LedColorSlot {
+  LC_PRINT = 0,    // printing
+  LC_PAUSE,        // paused
+  LC_ERROR,        // failed / error
+  LC_DONE,         // finished
+  LC_PREP,         // preparing (preheat / levelling / homing), when ledPrepRainbow is off
+  LC_WIFI_OFF,     // idle pixel: Wi-Fi not connected
+  LC_NO_PRINTER,   // idle pixel: no printer enabled
+  LC_PARTIAL,      // idle pixel: some printers offline
+  LC_ALL_OK,       // idle pixel: all printers online
+  LC_ALARM0,       // ringing, gentle stage
+  LC_ALARM1,       // ringing, loud stage
+  LC_ALARM2,       // ringing, maximum stage
+  LC_SETUP,        // setup mode / SETUP held 1 s
+  LC_MUTE_ON,      // mute turned on (flash)
+  LC_MUTE_OFF,     // mute turned off (flash)
+  LC_COUNT
+};
+extern const uint32_t LED_COLOR_DEF[LC_COUNT];
+
+#define NTP_SERVERS 3
+#define NTP_HOST_LEN 40
+
 #define MAX_PRINTERS 4   // each extra printer costs ~40-50KB of internal heap (TLS)
 #define MAX_ERRCODES 40
 #define MAX_NOTIFY   4
@@ -111,12 +135,17 @@ struct Config {
   ClockAlarm clocks[MAX_CLOCKS];   // alarm clocks (ring with the sound / strength of the "clock" event rule)
   uint8_t lang;            // LANG_ZH (0) or LANG_EN (1): push messages, web page and official error texts
   char ghRepo[96];         // firmware update source: "owner/repo" (latest GitHub release) or a full http(s):// folder URL; empty = none
+  // --- advanced settings ---
+  char ntp[NTP_SERVERS][NTP_HOST_LEN];   // NTP servers (host name or IP), tried in order; empty entries are skipped
+  uint32_t ledColor[LC_COUNT];           // 0xRRGGBB per state, see LedColorSlot
+  bool ledPrepRainbow;                   // "preparing" shows the rainbow chase (off = solid LC_PREP colour)
 };
 
 extern Config cfg;
 void configDefaults();
 bool configLoad();
 bool configSave();
+void configNtpDefaults();   // fill cfg.ntp with the built-in servers
 void configToJson(JsonObject o);
 void configFromJson(JsonVariantConst d);
 
